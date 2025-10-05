@@ -1,0 +1,99 @@
+import os, logging, sqlite3, random
+from flask import Flask
+from threading import Thread
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler
+from telegram.error import BadRequest
+
+TOKEN = os.getenv("BOT_TOKEN", "8260784970:AAFy5bwa_NyrrszjQ6XdWQgj4TwU15BJ0IQ")   
+TELEGRAM_CHANNEL = "https://t.me/giveawayxlink"     
+YOUTUBE_LINK = "https://youtube.com/@phantomztutorial?si=A-VXRGtRzCdK6fwv"
+OWNER_ID = int(os.getenv("OWNER_ID", "8358687728"))       
+
+logging.basicConfig(level=logging.INFO)
+
+
+conn = sqlite3.connect('bot.db', check_same_thread=False)
+cur = conn.cursor()
+cur.execute("CREATE TABLE IF NOT EXISTS participants(user_id INTEGER PRIMARY KEY)")
+conn.commit()
+
+def build_keyboard():
+    kb = [
+        [InlineKeyboardButton("➡️ Join Telegram Channel", url=f"https://t.me/giveawayxlink")],
+        [InlineKeyboardButton("▶️ YouTube Channel", url=https://youtube.com/@phantomztutorial?si=A-VXRGtRzCdK6fwv)],
+        [InlineKeyboardButton("✅ JOINED", callback_data="verify")]
+    ]
+    return InlineKeyboardMarkup(kb)
+
+def start(update, context):
+    text = ("📚 *Welcome in Premium Account Giveaway Bot!*\n\n"
+            "👉 Pehle hamara Telegram channel join karo.\n"
+            "👉 Hamara YouTube channel bhi check karo.\n"
+            "✅ Phir JOINED button dabao verify ke liye.")
+    update.message.reply_text(text, reply_markup=build_keyboard(), parse_mode=ParseMode.MARKDOWN)
+
+def check_membership(bot: Bot, user_id: int):
+    try:
+        member = bot.get_chat_member(chat_id=TELEGRAM_CHANNEL, user_id=user_id)
+        if member.status in ('left', 'kicked'):
+            return [TELEGRAM_CHANNEL], None
+    except BadRequest as e:
+        return None, str(e)
+    return [], None
+
+# ✅ JOINED button ka callback
+def verify_callback(update, context):
+    query = update.callback_query
+    user = query.from_user
+    query.answer()
+
+    not_joined, err = check_membership(context.bot, user.id)
+    if err:
+        query.message.reply_text("⚠️ Bot ko Telegram channel me admin banao, tabhi verify hoga.")
+        return
+
+    if not_joined:
+        query.message.reply_text("❗ Aap abhi Telegram channel join nahi kiye ho.")
+    else:
+        cur.execute("INSERT OR IGNORE INTO participants(user_id) VALUES (?)", (user.id,))
+        conn.commit()
+        query.message.reply_text("✅ Verified! Aap giveaway me add ho gaye ho.")
+
+# Admin ke liye winner pick
+def pick_winner(update, context):
+    if update.effective_user.id != OWNER_ID:
+        update.message.reply_text("❌ Sirf admin ye command use kar sakta hai.")
+        return
+    cur.execute("SELECT user_id FROM participants")
+    rows = [r[0] for r in cur.fetchall()]
+    if not rows:
+        update.message.reply_text("Abhi tak koi participant nahi hai.")
+        return
+    winners = random.sample(rows, min(3, len(rows)))
+    winners_txt = "\n".join([f"[User](tg://user?id={w})" for w in winners])
+    update.message.reply_text(f"🏆 Winners:\n{winners_txt}", parse_mode=ParseMode.MARKDOWN)
+
+# Bot function
+def run_bot():
+    updater = Updater(token=TOKEN, use_context=True)
+    dp = updater.dispatcher
+    dp.add_handler(CommandHandler('start', start))
+    dp.add_handler(CallbackQueryHandler(verify_callback, pattern='^verify$'))
+    dp.add_handler(CommandHandler('pick_winner', pick_winner))
+    updater.start_polling()
+    updater.idle()
+
+# Flask web server (Render ke liye)
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running on Render!"
+
+def run_web():
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
+if __name__ == "__main__":
+    Thread(target=run_bot).start()
+    run_web()
